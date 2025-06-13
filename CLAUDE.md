@@ -1,0 +1,1 @@
+- This is project for setting up the local development environment for agent-planner software, which consist of four different projects atm. They are defined in directories parallel to this one. There is already Dockerfiles for them.

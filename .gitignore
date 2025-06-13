@@ -1,0 +1,112 @@
+# Environment Variables
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Local SSL/TLS Certificates
+local-certs/*.pem
+local-certs/*.key
+local-certs/*.crt
+local-certs/*.csr
+local-certs/supabase/*
+!local-certs/dynamic.yml
+!local-certs/.gitkeep
+
+# API Keys and Secrets
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# Database
+*.sql.backup
+*.dump
+postgres-data/
+supabase-data/
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# IDE and Editor
+### IntelliJ IDEA ###
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+### Other Editors ###
+*.swp
+*.swo
+*~
+
+# OS Files
+### Mac OS ###
+.DS_Store
+### Windows ###
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+dist/
+build/
+target/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.cache
+
+# Backup files
+*.bak
+*.backup
+*_backup
+
+# Session data
+sessions/
+*.session
+
+# Generated tokens
+tokens/
+*.token

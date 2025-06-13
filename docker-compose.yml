@@ -1,0 +1,199 @@
+name: tagents-planner
+services:
+  traefik:
+    image: traefik:v2.11
+    command:
+      - "--api.insecure=true"
+      - "--accesslog=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=true"
+      - "--providers.file.filename=/certs/dynamic.yml"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--providers.docker.constraints=Label(`tagents.project`,`planner`)"
+    ports:
+      - "${HOST_IP:-127.0.0.1}:80:80"
+      - "${HOST_IP:-127.0.0.1}:443:443"
+      - "${HOST_IP:-127.0.0.1}:8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./local-certs:/certs"
+
+  supabase-db:
+    image: supabase/postgres:15.1.0.117
+    labels:
+      - "tagents.project=planner"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    volumes:
+      - supabase-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  supabase-auth:
+    image: supabase/gotrue:v2.99.0
+    labels:
+      - "tagents.project=planner"
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${SUPABASE_URL:-https://supabase.agent-planner.localhost}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@supabase-db:5432/postgres?sslmode=disable
+      GOTRUE_SITE_URL: https://agent-planner.localhost
+      GOTRUE_URI_ALLOW_LIST: https://agent-planner.localhost,https://*.agent-planner.localhost
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+
+  supabase-rest:
+    image: postgrest/postgrest:v11.2.0
+    labels:
+      - "tagents.project=planner"
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@supabase-db:5432/postgres
+      PGRST_DB_SCHEMAS: public,storage
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+
+  supabase-kong:
+    image: kong:2.8.1
+    labels:
+      - "tagents.project=planner"
+      - "traefik.enable=true"
+      - "traefik.http.routers.supabase.rule=Host(`supabase.agent-planner.localhost`)"
+      - "traefik.http.routers.supabase.entrypoints=websecure"
+      - "traefik.http.routers.supabase.tls=true"
+      - "traefik.http.services.supabase.loadbalancer.server.port=8000"
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+    volumes:
+      - ./supabase/kong.yml:/var/lib/kong/kong.yml:ro
+    depends_on:
+      - supabase-auth
+      - supabase-rest
+
+  agent-planner:
+    build:
+      context: ../agent-planner
+      dockerfile: Dockerfile
+    labels:
+      - "tagents.project=planner"
+      - "traefik.enable=true"
+      - "traefik.http.routers.agent-planner.rule=Host(`agent-planner.localhost`)"
+      - "traefik.http.routers.agent-planner.entrypoints=websecure"
+      - "traefik.http.routers.agent-planner.tls=true"
+      - "traefik.http.services.agent-planner.loadbalancer.server.port=3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - SUPABASE_URL=${SUPABASE_URL:-https://supabase.agent-planner.localhost}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRY=8h
+    volumes:
+      - ../agent-planner:/app
+      - /app/node_modules
+    depends_on:
+      - traefik
+      - supabase-kong
+
+  agent-planner-agents:
+    build:
+      context: ../agent-planner-agents
+      dockerfile: Dockerfile
+    labels:
+      - "tagents.project=planner"
+      - "traefik.enable=true"
+      - "traefik.http.routers.agent-planner-agents.rule=Host(`agents.agent-planner.localhost`)"
+      - "traefik.http.routers.agent-planner-agents.entrypoints=websecure"
+      - "traefik.http.routers.agent-planner-agents.tls=true"
+      - "traefik.http.services.agent-planner-agents.loadbalancer.server.port=3001"
+    environment:
+      - NODE_ENV=development
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - PLANNING_MCP_PATH=/app/../agent-planner-mcp
+      - WORKSPACE_PATH=/app/..
+      - PLANNING_API_URL=http://agent-planner:3000
+      - PLANNING_API_TOKEN=${PLANNING_API_TOKEN}
+    volumes:
+      - ../agent-planner-agents:/app
+      - ../agent-planner-mcp:/app/../agent-planner-mcp
+      - ../:/app/..
+    depends_on:
+      - traefik
+      - agent-planner
+
+  agent-planner-mcp:
+    build:
+      context: ../agent-planner-mcp
+      dockerfile: Dockerfile
+    labels:
+      - "tagents.project=planner"
+      - "traefik.enable=true"
+      - "traefik.http.routers.agent-planner-mcp.rule=Host(`mcp.agent-planner.localhost`)"
+      - "traefik.http.routers.agent-planner-mcp.entrypoints=websecure"
+      - "traefik.http.routers.agent-planner-mcp.tls=true"
+      - "traefik.http.services.agent-planner-mcp.loadbalancer.server.port=3002"
+    environment:
+      - NODE_ENV=development
+      - API_URL=http://agent-planner:3000
+      - USER_API_TOKEN=${USER_API_TOKEN}
+      - MCP_SERVER_NAME=planning-system-mcp
+      - MCP_SERVER_VERSION=0.1.0
+    volumes:
+      - ../agent-planner-mcp:/app
+      - /app/node_modules
+    depends_on:
+      - traefik
+      - agent-planner
+
+  agent-planner-ui:
+    build:
+      context: ../agent-planner-ui
+      dockerfile: Dockerfile
+    labels:
+      - "tagents.project=planner"
+      - "traefik.enable=true"
+      - "traefik.http.routers.agent-planner-ui.rule=Host(`agent-planner.localhost`)"
+      - "traefik.http.routers.agent-planner-ui.entrypoints=websecure"
+      - "traefik.http.routers.agent-planner-ui.tls=true"
+      - "traefik.http.services.agent-planner-ui.loadbalancer.server.port=3000"
+      - "traefik.http.routers.agent-planner-ui.priority=10"
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ../agent-planner-ui:/app
+      - /app/node_modules
+    depends_on:
+      - traefik
+      - agent-planner
+
+volumes:
+  supabase-db-data:
+
